@@ -11,7 +11,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/hooks/use-toast"
-import { supabase } from "@/lib/supabase"
 
 const signupSchema = z
   .object({
@@ -34,51 +33,38 @@ export default function SignupPage() {
 
   const form = useForm<SignupForm>({
     resolver: zodResolver(signupSchema),
-    defaultValues: {
-      name: "",
-      email: "",
-      password: "",
-      confirmPassword: "",
-    },
+    defaultValues: { name: "", email: "", password: "", confirmPassword: "" },
   })
 
   const onSubmit = async (data: SignupForm) => {
     setLoading(true)
     try {
-      const { data: authData, error } = await supabase.auth.signUp({
-        email: data.email,
-        password: data.password,
-        options: {
-          data: {
-            name: data.name,
-          },
-        },
+      const res = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: data.name,
+          email: data.email,
+          password: data.password,
+        }),
       })
 
-      if (error) {
+      const result = await res.json()
+
+      if (!res.ok) {
         toast({
           title: "Signup failed",
-          description: error.message,
+          description: result.error || "Failed to create account.",
           variant: "destructive",
         })
         return
       }
 
-      if (authData.user) {
-        // Create profile manually
-        await supabase.from("profiles").upsert({
-          id: authData.user.id,
-          name: data.name,
-          email: data.email,
-        })
-
-        toast({
-          title: "Account created!",
-          description: "You can now login with your credentials.",
-        })
-
-        router.push("/login")
-      }
+      toast({
+        title: "Account created!",
+        description: "You can now login with your credentials.",
+      })
+      router.push("/login")
     } catch (error) {
       toast({
         title: "Error",

@@ -1,7 +1,7 @@
 "use client"
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
-import { supabase } from "@/lib/supabase"
+import { useSession } from "next-auth/react"
 
 type Family = {
   id: string
@@ -31,46 +31,15 @@ type FamilyContextType = {
 const FamilyContext = createContext<FamilyContextType | undefined>(undefined)
 
 export function FamilyProvider({ children }: { children: ReactNode }) {
+  const { data: session, status } = useSession()
   const [families, setFamilies] = useState<Family[]>([])
   const [currentFamily, setCurrentFamily] = useState<Family | null>(null)
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const [user, setUser] = useState<any>(null)
 
-  useEffect(() => {
-    const getUser = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-      setUser(user)
-      if (user) {
-        await fetchFamilies(user.id)
-      }
-      setIsLoading(false)
-    }
-
-    getUser()
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user) {
-        setUser(session.user)
-        await fetchFamilies(session.user.id)
-      } else {
-        setUser(null)
-        setFamilies([])
-        setCurrentFamily(null)
-        setFamilyMembers([])
-      }
-    })
-
-    return () => subscription.unsubscribe()
-  }, [])
-
-  const fetchFamilies = async (userId: string) => {
+  const fetchFamilies = async () => {
     try {
-      const response = await fetch(`/api/families?userId=${userId}`)
+      const response = await fetch("/api/families")
       if (response.ok) {
         const data = await response.json()
         setFamilies(data)
@@ -80,11 +49,9 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const fetchFamilyMembers = async () => {
-    if (!currentFamily || !user) return
-
+  const fetchFamilyMembers = async (familyId: string) => {
     try {
-      const response = await fetch(`/api/families/${currentFamily.id}/members?userId=${user.id}`)
+      const response = await fetch(`/api/families/${familyId}/members`)
       if (response.ok) {
         const data = await response.json()
         setFamilyMembers(data)
@@ -94,23 +61,36 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const refetchFamilies = async () => {
-    if (user) {
-      await fetchFamilies(user.id)
+  // Fetch families when session becomes available
+  useEffect(() => {
+    if (status === "authenticated") {
+      fetchFamilies().finally(() => setIsLoading(false))
+    } else if (status === "unauthenticated") {
+      setFamilies([])
+      setCurrentFamily(null)
+      setFamilyMembers([])
+      setIsLoading(false)
     }
-  }
+  }, [status])
 
-  const refetchFamilyMembers = async () => {
-    await fetchFamilyMembers()
-  }
-
+  // Fetch members when current family changes
   useEffect(() => {
     if (currentFamily) {
-      fetchFamilyMembers()
+      fetchFamilyMembers(currentFamily.id)
     } else {
       setFamilyMembers([])
     }
-  }, [currentFamily, user])
+  }, [currentFamily])
+
+  const refetchFamilies = async () => {
+    await fetchFamilies()
+  }
+
+  const refetchFamilyMembers = async () => {
+    if (currentFamily) {
+      await fetchFamilyMembers(currentFamily.id)
+    }
+  }
 
   return (
     <FamilyContext.Provider

@@ -1,6 +1,7 @@
 "use client"
 
 import { useRouter } from "next/navigation"
+import { signOut } from "next-auth/react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
@@ -11,31 +12,37 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useAuth } from "@/components/auth-provider"
 
-export function UserNav({ user }: { user: any }) {
+type UserNavUser = {
+  name?: string | null
+  email?: string | null
+}
+
+export function UserNav({ user }: { user: UserNavUser }) {
   const router = useRouter()
-  const { signOut, clearSession } = useAuth()
 
   const handleSignOut = async () => {
-    await signOut()
+    await signOut({ redirect: false })
     router.push("/login")
   }
 
   const handleClearSession = async () => {
-    await clearSession()
-    router.push("/")
+    await signOut({ redirect: false })
+    if (typeof window !== "undefined") {
+      localStorage.clear()
+      sessionStorage.clear()
+      window.location.href = "/"
+    }
   }
 
-  const getInitials = (name: string) => {
-    return name
+  const getInitials = (name: string) =>
+    name
       .split(" ")
       .map((n) => n[0])
       .join("")
       .toUpperCase()
-  }
 
-  const displayName = user?.user_metadata?.name || user?.email?.split("@")[0] || "User"
+  const displayName = user?.name || user?.email?.split("@")[0] || "User"
   const initials = getInitials(displayName)
 
   return (

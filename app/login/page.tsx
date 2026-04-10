@@ -6,12 +6,12 @@ import { useRouter } from "next/navigation"
 import { z } from "zod"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
+import { signIn } from "next-auth/react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/hooks/use-toast"
-import { supabase } from "@/lib/supabase"
 
 const loginSchema = z.object({
   email: z.string().email("Please enter a valid email"),
@@ -27,37 +27,30 @@ export default function LoginPage() {
 
   const form = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
-    defaultValues: {
-      email: "",
-      password: "",
-    },
+    defaultValues: { email: "", password: "" },
   })
 
   const onSubmit = async (data: LoginForm) => {
     setLoading(true)
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const result = await signIn("credentials", {
         email: data.email,
         password: data.password,
+        redirect: false,
       })
 
-      if (error) {
+      if (result?.error) {
         toast({
           title: "Login failed",
-          description: error.message,
+          description: "Invalid email or password.",
           variant: "destructive",
         })
         return
       }
 
-      toast({
-        title: "Login successful",
-        description: "Redirecting to dashboard...",
-      })
-
-      setTimeout(() => {
-        window.location.href = "/dashboard"
-      }, 1000)
+      toast({ title: "Login successful", description: "Redirecting to dashboard..." })
+      router.push("/dashboard")
+      router.refresh()
     } catch (error) {
       toast({
         title: "Error",
@@ -98,7 +91,7 @@ export default function LoginPage() {
           </form>
           <div className="mt-4 text-center">
             <p className="text-sm text-muted-foreground">
-              Don't have an account?{" "}
+              Don&apos;t have an account?{" "}
               <Link href="/signup" className="text-primary hover:underline">
                 Sign up
               </Link>

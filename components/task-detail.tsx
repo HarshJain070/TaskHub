@@ -17,7 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useToast } from "@/hooks/use-toast"
-import { supabase } from "@/lib/supabase"
+
 
 type Task = {
   id: string
@@ -71,16 +71,10 @@ export function TaskDetail({ id }: { id: string }) {
     if (!task) return
 
     try {
-      // Get the current session
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-
       const response = await fetch(`/api/tasks/${id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
         },
         body: JSON.stringify({
           ...task,
@@ -98,8 +92,8 @@ export function TaskDetail({ id }: { id: string }) {
       })
 
       toast({
-        title: "Task updated",
-        description: "Task status has been updated successfully.",
+        title: "Status updated",
+        description: `Task status updated to ${newStatus}.`,
       })
     } catch (error) {
       toast({
@@ -111,17 +105,13 @@ export function TaskDetail({ id }: { id: string }) {
   }
 
   const handleDeleteTask = async () => {
-    try {
-      // Get the current session
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
+    if (!confirm("Are you sure you want to delete this task?")) {
+      return
+    }
 
+    try {
       const response = await fetch(`/api/tasks/${id}`, {
         method: "DELETE",
-        headers: {
-          ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
-        },
       })
 
       if (!response.ok) {
@@ -130,7 +120,7 @@ export function TaskDetail({ id }: { id: string }) {
 
       toast({
         title: "Task deleted",
-        description: "Task has been deleted successfully.",
+        description: "The task has been deleted successfully.",
       })
 
       router.push("/dashboard/tasks")

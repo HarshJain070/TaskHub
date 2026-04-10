@@ -30,7 +30,7 @@ import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/hooks/use-toast"
 import { useFamilyContext } from "@/components/family-provider"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { supabase } from "@/lib/supabase"
+
 
 type Task = {
   id: string
@@ -64,16 +64,7 @@ export function TaskList() {
       setIsLoading(true)
       setError(null)
       try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser()
-
-        if (!user) {
-          throw new Error("No authenticated user")
-        }
-
         const queryParams = new URLSearchParams()
-        queryParams.append("userId", user.id)
         if (statusFilter) queryParams.append("status", statusFilter)
         if (priorityFilter) queryParams.append("priority", priorityFilter)
 
@@ -82,15 +73,7 @@ export function TaskList() {
           queryParams.append("familyId", currentFamily.id)
         }
 
-        // Get auth token
-        const { data: sessionData } = await supabase.auth.getSession()
-        const token = sessionData.session?.access_token
-
-        const response = await fetch(`/api/tasks?${queryParams.toString()}`, {
-          headers: {
-            ...(token && { Authorization: `Bearer ${token}` }),
-          },
-        })
+        const response = await fetch(`/api/tasks?${queryParams.toString()}`)
 
         if (!response.ok) {
           const errorData = await response.json()
@@ -129,17 +112,10 @@ export function TaskList() {
       const taskToUpdate = tasks.find((task) => task.id === taskId)
       if (!taskToUpdate) return
 
-      // Get the current session
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-      const token = session?.access_token
-
       const response = await fetch(`/api/tasks/${taskId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           ...taskToUpdate,
@@ -153,13 +129,11 @@ export function TaskList() {
       }
 
       setTasks(tasks.map((task) => (task.id === taskId ? { ...task, status: newStatus as any } : task)))
-
       toast({
-        title: "Task updated",
-        description: "Task status has been updated successfully.",
+        title: "Status updated",
+        description: `Task status updated to ${newStatus}.`,
       })
     } catch (error: any) {
-      setError(error.message || "Failed to update task. Please try again.")
       toast({
         title: "Error",
         description: error.message || "Failed to update task. Please try again.",
@@ -169,20 +143,14 @@ export function TaskList() {
   }
 
   const handleDeleteTask = async (taskId: string) => {
+    if (!confirm("Are you sure you want to delete this task?")) {
+      return
+    }
+
     try {
       setError(null)
-
-      // Get the session for auth token
-      const { data: sessionData } = await supabase.auth.getSession()
-
       const response = await fetch(`/api/tasks/${taskId}`, {
         method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          ...(sessionData.session?.access_token && {
-            Authorization: `Bearer ${sessionData.session.access_token}`,
-          }),
-        },
       })
 
       if (!response.ok) {
@@ -191,13 +159,11 @@ export function TaskList() {
       }
 
       setTasks(tasks.filter((task) => task.id !== taskId))
-
       toast({
         title: "Task deleted",
-        description: "Task has been deleted successfully.",
+        description: "The task has been deleted successfully.",
       })
     } catch (error: any) {
-      setError(error.message || "Failed to delete task. Please try again.")
       toast({
         title: "Error",
         description: error.message || "Failed to delete task. Please try again.",

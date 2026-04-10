@@ -1,195 +1,107 @@
-import { NextResponse } from "next/server"
-import { createServerSupabaseClient } from "@/lib/supabase"
+import { type NextRequest, NextResponse } from "next/server"
+import { auth } from "@/auth"
+import { sql } from "@/lib/db"
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+async function verifyFamilyMembership(familyId: string, userId: string) {
+  const { rows } = await sql`
+    SELECT role FROM family_members
+    WHERE family_id = ${familyId} AND user_id = ${userId}
+  `
+  return rows[0] ?? null
+}
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
-    const supabase = createServerSupabaseClient()
-
-    // Get the user from the session
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
+    const session = await auth()
+    if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const familyId = params.id
-
-    // Check if user is a member of this family
-    const { data: membership, error: membershipError } = await supabase
-      .from("family_members")
-      .select("*")
-      .eq("family_id", familyId)
-      .eq("user_id", user.id)
-      .single()
-
-    if (membershipError || !membership) {
-      return NextResponse.json({ error: "Family not found or you are not a member" }, { status: 404 })
-    }
-
-    // Get family details
-    const { data: family, error: familyError } = await supabase.from("families").select("*").eq("id", familyId).single()
-
-    if (familyError) {
+    const { id } = await params
+    const membership = await verifyFamilyMembership(id, session.user.id)
+    if (!membership) {
       return NextResponse.json({ error: "Family not found" }, { status: 404 })
     }
 
-    // Get family members
-    const { data: members, error: membersError } = await supabase
-      .from("family_members")
-      .select(`
-        *,
-        profiles(id, name, email)
-      `)
-      .eq("family_id", familyId)
-
-    if (membersError) {
-      return NextResponse.json({ error: "Failed to fetch family members" }, { status: 500 })
+    const { rows } = await sql`SELECT * FROM families WHERE id = ${id}`
+    if (rows.length === 0) {
+      return NextResponse.json({ error: "Family not found" }, { status: 404 })
     }
 
-    const formattedMembers = members.map((member) => ({
-      user_id: member.user_id,
-      name: member.profiles?.name || "Unknown",
-      email: member.profiles?.email || "",
-      role: member.role,
-    }))
-
-    return NextResponse.json({
-      ...family,
-      members: formattedMembers,
-    })
-  } catch (error) {
+    return NextResponse.json(rows[0])
+  } catch (error: any) {
     console.error("Error fetching family:", error)
     return NextResponse.json({ error: "Failed to fetch family" }, { status: 500 })
   }
 }
 
-export async function PUT(request: Request, { params }: { params: { id: string } }) {
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
-    const supabase = createServerSupabaseClient()
-    const familyId = params.id
-    const familyData = await request.json()
+    const session = await auth()
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+    const userId = session.user.id
 
-    // Get the authorization header from the request
-    const authHeader = request.headers.get("authorization")
-    let userId = null
-
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      const token = authHeader.split(" ")[1]
-
-      // Verify the token
-      const { data, error } = await supabase.auth.getUser(token)
-
-      if (error || !data.user) {
-        console.error("Auth error:", error)
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-      }
-
-      userId = data.user.id
-    } else {
-      // Fallback to getting user from session
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser()
-
-      if (authError || !user) {
-        console.error("Auth error:", authError)
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-      }
-
-      userId = user.id
+    const { id } = await params
+    const membership = await verifyFamilyMembership(id, userId)
+    if (!membership || !["admin", "parent"].includes(membership.role)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
-    // Check if user is an admin of this family
-    const { data: membership, error: membershipError } = await supabase
-      .from("family_members")
-      .select("role")
-      .eq("family_id", familyId)
-      .eq("user_id", userId)
-      .eq("role", "admin")
-      .single()
+    const body = await request.json()
+    const { name, description } = body
 
-    if (membershipError || !membership) {
-      return NextResponse.json({ error: "You don't have permission to update this family" }, { status: 403 })
+    if (!name) {
+      return NextResponse.json({ error: "Family name is required" }, { status: 400 })
     }
 
-    const { error } = await supabase
-      .from("families")
-      .update({
-        name: familyData.name,
-        description: familyData.description || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", familyId)
+    const { rows } = await sql`
+      UPDATE families
+      SET name = ${name}, description = ${description ?? null}, updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING *
+    `
 
-    if (error) throw error
-
-    return NextResponse.json({ message: "Family updated successfully" })
-  } catch (error) {
+    return NextResponse.json(rows[0])
+  } catch (error: any) {
     console.error("Error updating family:", error)
     return NextResponse.json({ error: "Failed to update family" }, { status: 500 })
   }
 }
 
-export async function DELETE(request: Request, { params }: { params: { id: string } }) {
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
-    const supabase = createServerSupabaseClient()
-    const familyId = params.id
-
-    // Get the authorization header from the request
-    const authHeader = request.headers.get("authorization")
-    let userId = null
-
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      const token = authHeader.split(" ")[1]
-
-      // Verify the token
-      const { data, error } = await supabase.auth.getUser(token)
-
-      if (error || !data.user) {
-        console.error("Auth error:", error)
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-      }
-
-      userId = data.user.id
-    } else {
-      // Fallback to getting user from session
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser()
-
-      if (authError || !user) {
-        console.error("Auth error:", authError)
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-      }
-
-      userId = user.id
+    const session = await auth()
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
+    const userId = session.user.id
 
-    // Check if user is an admin of this family
-    const { data: membership, error: membershipError } = await supabase
-      .from("family_members")
-      .select("role")
-      .eq("family_id", familyId)
-      .eq("user_id", userId)
-      .eq("role", "admin")
-      .single()
+    const { id } = await params
 
-    if (membershipError || !membership) {
-      return NextResponse.json({ error: "You don't have permission to delete this family" }, { status: 403 })
+    // Only the family creator (admin) can delete it
+    const { rows } = await sql`
+      DELETE FROM families
+      WHERE id = ${id} AND created_by = ${userId}
+      RETURNING id
+    `
+
+    if (rows.length === 0) {
+      return NextResponse.json({ error: "Family not found or permission denied" }, { status: 404 })
     }
-
-    // Delete family (cascade will handle members and tasks)
-    const { error } = await supabase.from("families").delete().eq("id", familyId)
-
-    if (error) throw error
 
     return NextResponse.json({ message: "Family deleted successfully" })
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error deleting family:", error)
     return NextResponse.json({ error: "Failed to delete family" }, { status: 500 })
   }

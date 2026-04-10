@@ -1,158 +1,178 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { createServerSupabaseClient } from "@/lib/supabase"
+import { auth } from "@/auth"
+import { sql } from "@/lib/db"
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = createServerSupabaseClient()
-    const { searchParams } = new URL(request.url)
-
-    const userId = searchParams.get("userId")
-    const status = searchParams.get("status")
-    const priority = searchParams.get("priority")
-    const familyId = searchParams.get("familyId")
-
-    console.log("API: GET /api/tasks called with params:", { userId, status, priority, familyId })
-
-    if (!userId) {
-      console.log("API: No userId provided")
-      return NextResponse.json({ error: "User ID is required" }, { status: 400 })
-    }
-
-    // Get auth token from header
-    const authHeader = request.headers.get("authorization")
-    let currentUserId = null
-
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      const token = authHeader.split(" ")[1]
-      const { data, error } = await supabase.auth.getUser(token)
-
-      if (error || !data.user) {
-        console.log("API: Auth error:", error)
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-      }
-
-      currentUserId = data.user.id
-      console.log("API: Authenticated user:", currentUserId)
-    } else {
-      console.log("API: No auth header provided")
+    const session = await auth()
+    if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
+    const userId = session.user.id
 
-    // Build the query
-    let query = supabase.from("tasks").select(`
-        *,
-        assigned_to_profile:profiles!tasks_assigned_to_fkey(name),
-        family:families(name)
-      `)
+    const { searchParams } = new URL(request.url)
+    const familyId = searchParams.get("familyId")
+    const status = searchParams.get("status")
+    const priority = searchParams.get("priority")
 
-    // Filter tasks based on user access
+    let tasks
+
     if (familyId) {
-      // If familyId is specified, only show tasks from that family
-      query = query.eq("family_id", familyId)
+      // Verify the user is a member of this family first
+      const { rows: membership } = await sql`
+        SELECT 1 FROM family_members WHERE family_id = ${familyId} AND user_id = ${userId}
+      `
+      if (membership.length === 0) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+      }
+
+      if (status && priority) {
+        const { rows } = await sql`
+          SELECT t.*, u_created.name as creator_name, u_assigned.name as assignee_name
+          FROM tasks t
+          LEFT JOIN users u_created ON t.created_by = u_created.id
+          LEFT JOIN users u_assigned ON t.assigned_to = u_assigned.id
+          WHERE t.family_id = ${familyId}
+            AND t.status = ${status}
+            AND t.priority = ${priority}
+          ORDER BY t.created_at DESC
+        `
+        tasks = rows
+      } else if (status) {
+        const { rows } = await sql`
+          SELECT t.*, u_created.name as creator_name, u_assigned.name as assignee_name
+          FROM tasks t
+          LEFT JOIN users u_created ON t.created_by = u_created.id
+          LEFT JOIN users u_assigned ON t.assigned_to = u_assigned.id
+          WHERE t.family_id = ${familyId} AND t.status = ${status}
+          ORDER BY t.created_at DESC
+        `
+        tasks = rows
+      } else if (priority) {
+        const { rows } = await sql`
+          SELECT t.*, u_created.name as creator_name, u_assigned.name as assignee_name
+          FROM tasks t
+          LEFT JOIN users u_created ON t.created_by = u_created.id
+          LEFT JOIN users u_assigned ON t.assigned_to = u_assigned.id
+          WHERE t.family_id = ${familyId} AND t.priority = ${priority}
+          ORDER BY t.created_at DESC
+        `
+        tasks = rows
+      } else {
+        const { rows } = await sql`
+          SELECT t.*, u_created.name as creator_name, u_assigned.name as assignee_name
+          FROM tasks t
+          LEFT JOIN users u_created ON t.created_by = u_created.id
+          LEFT JOIN users u_assigned ON t.assigned_to = u_assigned.id
+          WHERE t.family_id = ${familyId}
+          ORDER BY t.created_at DESC
+        `
+        tasks = rows
+      }
     } else {
-      // Show all tasks the user has access to (created by them, assigned to them, or family tasks they're part of)
-      query = query.or(`created_by.eq.${currentUserId},assigned_to.eq.${currentUserId}`)
+      // Personal tasks
+      if (status && priority) {
+        const { rows } = await sql`
+          SELECT t.*, u_created.name as creator_name, u_assigned.name as assignee_name
+          FROM tasks t
+          LEFT JOIN users u_created ON t.created_by = u_created.id
+          LEFT JOIN users u_assigned ON t.assigned_to = u_assigned.id
+          WHERE (t.created_by = ${userId} OR t.assigned_to = ${userId})
+            AND t.is_family_task = false
+            AND t.status = ${status}
+            AND t.priority = ${priority}
+          ORDER BY t.created_at DESC
+        `
+        tasks = rows
+      } else if (status) {
+        const { rows } = await sql`
+          SELECT t.*, u_created.name as creator_name, u_assigned.name as assignee_name
+          FROM tasks t
+          LEFT JOIN users u_created ON t.created_by = u_created.id
+          LEFT JOIN users u_assigned ON t.assigned_to = u_assigned.id
+          WHERE (t.created_by = ${userId} OR t.assigned_to = ${userId})
+            AND t.is_family_task = false
+            AND t.status = ${status}
+          ORDER BY t.created_at DESC
+        `
+        tasks = rows
+      } else if (priority) {
+        const { rows } = await sql`
+          SELECT t.*, u_created.name as creator_name, u_assigned.name as assignee_name
+          FROM tasks t
+          LEFT JOIN users u_created ON t.created_by = u_created.id
+          LEFT JOIN users u_assigned ON t.assigned_to = u_assigned.id
+          WHERE (t.created_by = ${userId} OR t.assigned_to = ${userId})
+            AND t.is_family_task = false
+            AND t.priority = ${priority}
+          ORDER BY t.created_at DESC
+        `
+        tasks = rows
+      } else {
+        const { rows } = await sql`
+          SELECT t.*, u_created.name as creator_name, u_assigned.name as assignee_name
+          FROM tasks t
+          LEFT JOIN users u_created ON t.created_by = u_created.id
+          LEFT JOIN users u_assigned ON t.assigned_to = u_assigned.id
+          WHERE (t.created_by = ${userId} OR t.assigned_to = ${userId})
+            AND t.is_family_task = false
+          ORDER BY t.created_at DESC
+        `
+        tasks = rows
+      }
     }
 
-    if (status && status !== "all") {
-      query = query.eq("status", status)
-    }
-
-    if (priority && priority !== "all") {
-      query = query.eq("priority", priority)
-    }
-
-    query = query.order("due_date", { ascending: true })
-
-    console.log("API: Executing query...")
-    const { data: tasks, error } = await query
-
-    if (error) {
-      console.error("API: Database error:", error)
-      return NextResponse.json({ error: "Failed to fetch tasks" }, { status: 500 })
-    }
-
-    console.log("API: Found tasks:", tasks?.length || 0)
-
-    // Format the response to match the expected structure
-    const formattedTasks =
-      tasks?.map((task) => ({
-        ...task,
-        assigned_to_name: task.assigned_to_profile?.name || null,
-        family_name: task.family?.name || null,
-      })) || []
-
-    console.log("API: Returning formatted tasks:", formattedTasks.length)
-    return NextResponse.json(formattedTasks)
-  } catch (error) {
-    console.error("API: Error fetching tasks:", error)
+    return NextResponse.json(tasks)
+  } catch (error: any) {
+    console.error("Error fetching tasks:", error)
     return NextResponse.json({ error: "Failed to fetch tasks" }, { status: 500 })
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = createServerSupabaseClient()
+    const session = await auth()
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+    const userId = session.user.id
+
     const body = await request.json()
+    const { title, description, status, priority, due_date, assigned_to, family_id, is_family_task } = body
 
-    console.log("API: Creating task with data:", body)
-
-    // Get the authorization header from the request
-    const authHeader = request.headers.get("authorization")
-    let currentUserId = null
-
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      const token = authHeader.split(" ")[1]
-
-      // Verify the token
-      const { data, error } = await supabase.auth.getUser(token)
-
-      if (error || !data.user) {
-        console.error("API: Auth error:", error)
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-      }
-
-      currentUserId = data.user.id
-    } else {
-      // Fallback to getting user from session
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser()
-
-      if (authError || !user) {
-        console.error("API: Auth error:", authError)
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-      }
-
-      currentUserId = user.id
+    if (!title || !due_date) {
+      return NextResponse.json({ error: "Title and due date are required" }, { status: 400 })
     }
 
-    const { data: task, error } = await supabase
-      .from("tasks")
-      .insert({
-        title: body.title,
-        description: body.description || null,
-        status: "todo",
-        priority: body.priority || "medium",
-        due_date: body.due_date,
-        created_by: currentUserId,
-        assigned_to: body.assigned_to || currentUserId,
-        family_id: body.family_id || null,
-        is_family_task: !!body.family_id,
-      })
-      .select()
-      .single()
-
-    if (error) {
-      console.error("API: Task creation error:", error)
-      return NextResponse.json({ error: error.message || "Failed to create task" }, { status: 500 })
+    // If creating a family task, verify membership
+    if (family_id) {
+      const { rows: membership } = await sql`
+        SELECT 1 FROM family_members WHERE family_id = ${family_id} AND user_id = ${userId}
+      `
+      if (membership.length === 0) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+      }
     }
 
-    console.log("API: Task created successfully:", task.id)
-    return NextResponse.json({ message: "Task created successfully", taskId: task.id }, { status: 201 })
-  } catch (error) {
-    console.error("API: Error creating task:", error)
+    const { rows } = await sql`
+      INSERT INTO tasks (title, description, status, priority, due_date, created_by, assigned_to, family_id, is_family_task)
+      VALUES (
+        ${title},
+        ${description ?? null},
+        ${status ?? "todo"},
+        ${priority ?? "medium"},
+        ${due_date},
+        ${userId},
+        ${assigned_to ?? null},
+        ${family_id ?? null},
+        ${is_family_task ?? false}
+      )
+      RETURNING *
+    `
+
+    return NextResponse.json(rows[0], { status: 201 })
+  } catch (error: any) {
+    console.error("Error creating task:", error)
     return NextResponse.json({ error: "Failed to create task" }, { status: 500 })
   }
 }

@@ -1,9 +1,14 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { createServerSupabaseClient } from "@/lib/supabase"
+import { auth } from "@/auth"
+import { sql } from "@/lib/db"
 
 export async function PUT(request: NextRequest) {
   try {
-    const supabase = createServerSupabaseClient()
+    const session = await auth()
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
     const body = await request.json()
     const { name, userId } = body
 
@@ -11,18 +16,19 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "User ID and name are required" }, { status: 400 })
     }
 
-    // Update user metadata
-    const { data, error } = await supabase.auth.admin.updateUserById(userId, {
-      user_metadata: { name },
-    })
-
-    if (error) {
-      console.error("Profile update error:", error)
-      return NextResponse.json({ error: "Failed to update profile" }, { status: 500 })
+    // Ensure callers can only update their own profile
+    if (userId !== session.user.id) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
+    await sql`
+      UPDATE users
+      SET name = ${name}, updated_at = NOW()
+      WHERE id = ${userId}
+    `
+
     return NextResponse.json({ message: "Profile updated successfully" })
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error updating profile:", error)
     return NextResponse.json({ error: "Failed to update profile" }, { status: 500 })
   }

@@ -25,7 +25,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useToast } from "@/hooks/use-toast"
 import { useFamilyContext } from "@/components/family-provider"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { supabase } from "@/lib/supabase"
+
 
 const familySchema = z.object({
   name: z.string().min(2, { message: "Name must be at least 2 characters" }),
@@ -74,23 +74,11 @@ export function FamilyManagement() {
   const onCreateFamily = async (data: FamilyFormValues) => {
     try {
       setError(null)
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-
-      if (!user) {
-        throw new Error("No authenticated user")
-      }
 
       const response = await fetch("/api/families", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...data,
-          userId: user.id,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
       })
 
       if (!response.ok) {
@@ -121,17 +109,10 @@ export function FamilyManagement() {
 
     try {
       setError(null)
-      // Get the current session
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
 
       const response = await fetch(`/api/families/${currentFamily.id}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       })
 
@@ -166,16 +147,9 @@ export function FamilyManagement() {
 
     try {
       setError(null)
-      // Get the current session
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
 
       const response = await fetch(`/api/families/${currentFamily.id}`, {
         method: "DELETE",
-        headers: {
-          ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
-        },
       })
 
       if (!response.ok) {
@@ -205,23 +179,11 @@ export function FamilyManagement() {
 
     try {
       setError(null)
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-
-      if (!user) {
-        throw new Error("No authenticated user")
-      }
 
       const response = await fetch(`/api/families/${currentFamily.id}/members`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...data,
-          userId: user.id,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
       })
 
       if (!response.ok) {
@@ -253,17 +215,9 @@ export function FamilyManagement() {
     try {
       setError(null)
 
-      // Get the current session
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-
       const response = await fetch(`/api/families/${currentFamily.id}/members/${selectedMember.user_id}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ role: newRole }),
       })
 
@@ -300,16 +254,9 @@ export function FamilyManagement() {
 
     try {
       setError(null)
-      // Get the current session
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
 
       const response = await fetch(`/api/families/${currentFamily.id}/members/${memberId}`, {
         method: "DELETE",
-        headers: {
-          ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
-        },
       })
 
       if (!response.ok) {

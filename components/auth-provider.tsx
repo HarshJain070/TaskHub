@@ -1,12 +1,17 @@
 "use client"
 
 import type React from "react"
-import { createContext, useContext, useEffect, useState } from "react"
-import type { User } from "@supabase/supabase-js"
-import { supabase } from "@/lib/supabase"
+import { createContext, useContext } from "react"
+import { useSession, signIn as nextAuthSignIn, signOut as nextAuthSignOut } from "next-auth/react"
+
+type AuthUser = {
+  id: string
+  email: string
+  name: string
+}
 
 type AuthContextType = {
-  user: User | null
+  user: AuthUser | null
   loading: boolean
   signIn: (email: string, password: string) => Promise<{ error?: string }>
   signUp: (email: string, password: string, name: string) => Promise<{ error?: string }>
@@ -19,143 +24,66 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   signIn: async () => ({ error: "Not implemented" }),
   signUp: async () => ({ error: "Not implemented" }),
-  signOut: async () => {},
-  clearSession: async () => {},
+  signOut: async () => { },
+  clearSession: async () => { },
 })
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
+  const { data: session, status } = useSession()
 
-  useEffect(() => {
-    let mounted = true
-
-    // Get initial session
-    const getInitialSession = async () => {
-      try {
-        const {
-          data: { session },
-          error,
-        } = await supabase.auth.getSession()
-
-        if (!mounted) return
-
-        if (error) {
-          console.error("Session error:", error.message)
-          setUser(null)
-        } else if (session?.user) {
-          console.log("Found existing session for:", session.user.email)
-          setUser(session.user)
-        } else {
-          console.log("No active session")
-          setUser(null)
-        }
-      } catch (err) {
-        console.error("Session check error:", err)
-        if (mounted) setUser(null)
-      } finally {
-        if (mounted) setLoading(false)
-      }
+  const user: AuthUser | null = session?.user
+    ? {
+      id: session.user.id,
+      email: session.user.email ?? "",
+      name: session.user.name ?? "",
     }
+    : null
 
-    getInitialSession()
-
-    // Listen for auth state changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!mounted) return
-
-      console.log("Auth state changed:", event, session?.user?.email)
-
-      if (session?.user) {
-        setUser(session.user)
-      } else {
-        setUser(null)
-      }
-
-      setLoading(false)
-    })
-
-    return () => {
-      mounted = false
-      subscription.unsubscribe()
-    }
-  }, [])
+  const loading = status === "loading"
 
   const signIn = async (email: string, password: string) => {
     try {
-      setLoading(true)
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const result = await nextAuthSignIn("credentials", {
         email,
         password,
+        redirect: false,
       })
-
-      if (error) {
-        console.error("Sign in error:", error.message)
-        setLoading(false)
-        return { error: error.message }
+      if (result?.error) {
+        return { error: "Invalid email or password" }
       }
-
-      if (data.user) {
-        console.log("Sign in successful for:", data.user.email)
-        setUser(data.user)
-        setLoading(false)
-        return { error: undefined }
-      }
-
-      setLoading(false)
-      return { error: "Sign in failed" }
+      return {}
     } catch (err: any) {
-      console.error("Unexpected sign in error:", err.message)
-      setLoading(false)
       return { error: "An unexpected error occurred" }
     }
   }
 
   const signUp = async (email: string, password: string, name: string) => {
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: { name },
-        },
+      const res = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, name }),
       })
-
-      if (error) {
-        console.error("Sign up error:", error.message)
-        return { error: error.message }
+      const data = await res.json()
+      if (!res.ok) {
+        return { error: data.error || "Failed to create account" }
       }
-
-      console.log("Sign up successful:", data.user?.email)
-      return { error: undefined }
+      return {}
     } catch (err: any) {
-      console.error("Unexpected sign up error:", err.message)
       return { error: "An unexpected error occurred" }
     }
   }
 
   const signOut = async () => {
-    try {
-      await supabase.auth.signOut()
-      setUser(null)
-    } catch (err) {
-      console.error("Sign out error:", err)
-    }
+    await nextAuthSignOut({ redirect: false })
   }
 
   const clearSession = async () => {
-    try {
-      await supabase.auth.signOut()
-      setUser(null)
-      // Clear any stored session data
+    await nextAuthSignOut({ redirect: false })
+    if (typeof window !== "undefined") {
       localStorage.clear()
       sessionStorage.clear()
-      // Force a hard refresh to clear any cached data
       window.location.href = "/"
-    } catch (err) {
-      console.error("Clear session error:", err)
     }
   }
 

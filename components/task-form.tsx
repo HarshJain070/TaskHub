@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox"
 import { useToast } from "@/hooks/use-toast"
 import { useFamilyContext } from "@/components/family-provider"
-import { supabase } from "@/lib/supabase"
+
 
 const taskSchema = z.object({
   title: z.string().min(2, { message: "Title must be at least 2 characters" }),
@@ -69,25 +69,7 @@ export function TaskForm({ id }: { id?: string }) {
       const fetchTask = async () => {
         setIsLoading(true)
         try {
-          const {
-            data: { user },
-          } = await supabase.auth.getUser()
-
-          if (!user) {
-            throw new Error("No authenticated user")
-          }
-
-          // Get the session for auth token
-          const { data: sessionData } = await supabase.auth.getSession()
-
-          const response = await fetch(`/api/tasks/${id}?userId=${user.id}`, {
-            headers: {
-              "Content-Type": "application/json",
-              ...(sessionData.session?.access_token && {
-                Authorization: `Bearer ${sessionData.session.access_token}`,
-              }),
-            },
-          })
+          const response = await fetch(`/api/tasks/${id}`)
           if (!response.ok) {
             throw new Error("Failed to fetch task")
           }
@@ -102,16 +84,15 @@ export function TaskForm({ id }: { id?: string }) {
             due_time: format(dueDateTime, "HH:mm"),
             priority: task.priority,
             status: task.status,
-            assigned_to: task.assigned_to || null,
-            is_family_task: !!task.is_family_task,
+            assigned_to: task.assigned_to,
+            is_family_task: task.is_family_task,
           })
-        } catch (error) {
+        } catch (error: any) {
           toast({
             title: "Error",
-            description: "Failed to load task. Please try again.",
+            description: error.message || "Failed to load task. Please try again.",
             variant: "destructive",
           })
-          router.push("/dashboard/tasks")
         } finally {
           setIsLoading(false)
         }
@@ -119,61 +100,36 @@ export function TaskForm({ id }: { id?: string }) {
 
       fetchTask()
     }
-  }, [id, form, router, toast])
+  }, [id, form, toast])
 
   const onSubmit = async (data: TaskFormValues) => {
     setIsLoading(true)
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-
-      if (!user) {
-        throw new Error("No authenticated user")
-      }
-
       // Combine date and time
       const [hours, minutes] = data.due_time.split(":").map(Number)
       const dueDateTime = new Date(data.due_date)
       dueDateTime.setHours(hours, minutes, 0, 0)
 
-      const taskData = {
-        title: data.title,
-        description: data.description || "",
-        priority: data.priority,
-        status: data.status,
-        due_date: dueDateTime.toISOString(),
-        assigned_to: data.assigned_to === "unassigned" ? null : data.assigned_to,
-        family_id: data.is_family_task ? currentFamily?.id : null,
-        is_family_task: data.is_family_task,
-        userId: user.id,
-      }
-
-      const url = id ? `/api/tasks/${id}` : "/api/tasks"
-      const method = id ? "PUT" : "POST"
-
-      // Get the session for auth token
-      const { data: sessionData } = await supabase.auth.getSession()
-
-      const response = await fetch(url, {
-        method,
+      const response = await fetch(isEditing ? `/api/tasks/${id}` : "/api/tasks", {
+        method: isEditing ? "PUT" : "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(sessionData.session?.access_token && {
-            Authorization: `Bearer ${sessionData.session.access_token}`,
-          }),
         },
-        body: JSON.stringify(taskData),
+        body: JSON.stringify({
+          ...data,
+          due_date: dueDateTime.toISOString(),
+          family_id: data.is_family_task ? currentFamily?.id : null,
+        }),
       })
 
       if (!response.ok) {
         const errorData = await response.json()
-        throw new Error(errorData.error || `Failed to ${id ? "update" : "create"} task`)
+        throw new Error(errorData.error || `Failed to ${isEditing ? "update" : "create"} task`)
       }
 
       toast({
-        title: id ? "Task updated" : "Task created",
-        description: `Task has been ${id ? "updated" : "created"} successfully.`,
+        title: isEditing ? "Task updated" : "Task created",
+        description: isEditing ? "Your task has been updated successfully." : "Your task has been created successfully.",
       })
 
       router.push("/dashboard/tasks")
@@ -181,7 +137,7 @@ export function TaskForm({ id }: { id?: string }) {
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || `Failed to ${id ? "update" : "create"} task. Please try again.`,
+        description: error.message || `Failed to ${isEditing ? "update" : "create"} task. Please try again.`,
         variant: "destructive",
       })
     } finally {

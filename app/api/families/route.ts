@@ -1,57 +1,25 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { createServerSupabaseClient } from "@/lib/supabase"
-
-async function getAuthenticatedUser(request: NextRequest) {
-  const authHeader = request.headers.get("authorization")
-  if (!authHeader?.startsWith("Bearer ")) {
-    return null
-  }
-
-  const token = authHeader.substring(7)
-
-  try {
-    const supabase = createServerSupabaseClient()
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser(token)
-    if (error || !user) {
-      return null
-    }
-    return user
-  } catch (error) {
-    console.error("Auth error:", error)
-    return null
-  }
-}
+import { auth } from "@/auth"
+import { sql } from "@/lib/db"
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = createServerSupabaseClient()
-
-    // Get user ID from query parameter or session
-    const userId = request.nextUrl.searchParams.get("userId")
-
-    if (!userId) {
-      return NextResponse.json({ error: "User ID is required" }, { status: 400 })
+    const session = await auth()
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
+    const userId = session.user.id
 
-    const { data: families, error } = await supabase
-      .from("families")
-      .select(`
-        *,
-        family_members!inner(role)
-      `)
-      .eq("family_members.user_id", userId)
-      .order("created_at", { ascending: false })
+    const { rows } = await sql`
+      SELECT f.*
+      FROM families f
+      INNER JOIN family_members fm ON f.id = fm.family_id
+      WHERE fm.user_id = ${userId}
+      ORDER BY f.created_at DESC
+    `
 
-    if (error) {
-      console.error("Database error:", error)
-      return NextResponse.json({ error: "Failed to fetch families" }, { status: 500 })
-    }
-
-    return NextResponse.json(families || [])
-  } catch (error) {
+    return NextResponse.json(rows)
+  } catch (error: any) {
     console.error("Error fetching families:", error)
     return NextResponse.json({ error: "Failed to fetch families" }, { status: 500 })
   }
@@ -59,50 +27,35 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = createServerSupabaseClient()
-    const body = await request.json()
-    const { name, description, userId } = body
-
-    if (!userId) {
-      return NextResponse.json({ error: "User ID is required" }, { status: 400 })
+    const session = await auth()
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
+    const userId = session.user.id
+
+    const body = await request.json()
+    const { name, description } = body
 
     if (!name) {
       return NextResponse.json({ error: "Family name is required" }, { status: 400 })
     }
 
-    // Create family
-    const { data: family, error: familyError } = await supabase
-      .from("families")
-      .insert({
-        name,
-        description: description || null,
-        created_by: userId,
-      })
-      .select()
-      .single()
+    // Create the family and add the creator as admin in a single transaction
+    const { rows } = await sql`
+      WITH new_family AS (
+        INSERT INTO families (name, description, created_by)
+        VALUES (${name}, ${description ?? null}, ${userId})
+        RETURNING *
+      ),
+      add_member AS (
+        INSERT INTO family_members (family_id, user_id, role)
+        SELECT id, ${userId}, 'admin' FROM new_family
+      )
+      SELECT * FROM new_family
+    `
 
-    if (familyError) {
-      console.error("Family creation error:", familyError)
-      return NextResponse.json({ error: "Failed to create family" }, { status: 500 })
-    }
-
-    // Add creator as admin
-    const { error: memberError } = await supabase.from("family_members").insert({
-      family_id: family.id,
-      user_id: userId,
-      role: "admin",
-    })
-
-    if (memberError) {
-      console.error("Member creation error:", memberError)
-      // Clean up the family if member creation fails
-      await supabase.from("families").delete().eq("id", family.id)
-      return NextResponse.json({ error: "Failed to create family membership" }, { status: 500 })
-    }
-
-    return NextResponse.json({ message: "Family created successfully", familyId: family.id }, { status: 201 })
-  } catch (error) {
+    return NextResponse.json(rows[0], { status: 201 })
+  } catch (error: any) {
     console.error("Error creating family:", error)
     return NextResponse.json({ error: "Failed to create family" }, { status: 500 })
   }

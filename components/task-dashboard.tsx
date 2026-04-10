@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Progress } from "@/components/ui/progress"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
-import { supabase } from "@/lib/supabase"
+
 
 type Task = {
   id: string
@@ -34,36 +34,9 @@ export function TaskDashboard() {
       setIsLoading(true)
 
       try {
-        // Get current user
-        const { data: userData, error: userError } = await supabase.auth.getUser()
+        console.log("Dashboard: Making API request...")
 
-        if (userError || !userData.user) {
-          console.error("Dashboard: No authenticated user", userError)
-          throw new Error("No authenticated user")
-        }
-
-        console.log("Dashboard: User found:", userData.user.id)
-
-        // Get auth token
-        const { data: sessionData } = await supabase.auth.getSession()
-        const token = sessionData.session?.access_token
-
-        if (!token) {
-          console.error("Dashboard: No auth token found")
-          throw new Error("No auth token")
-        }
-
-        console.log("Dashboard: Auth token found, making API request...")
-
-        const url = `/api/tasks?userId=${userData.user.id}`
-        console.log("Dashboard: Fetching from:", url)
-
-        const response = await fetch(url, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-        })
+        const response = await fetch("/api/tasks")
 
         console.log("Dashboard: API response status:", response.status)
 
@@ -94,6 +67,7 @@ export function TaskDashboard() {
 
     fetchTasks()
   }, [toast])
+
 
   // Calculate task statistics
   const todoTasks = tasks.filter((task) => task.status === "todo")

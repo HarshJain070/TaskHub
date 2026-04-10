@@ -1,141 +1,93 @@
-import { NextResponse } from "next/server"
-import { createServerSupabaseClient } from "@/lib/supabase"
+import { type NextRequest, NextResponse } from "next/server"
+import { auth } from "@/auth"
+import { sql } from "@/lib/db"
 
-export async function PUT(request: Request, { params }: { params: { id: string; userId: string } }) {
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string; userId: string }> },
+) {
   try {
-    const supabase = createServerSupabaseClient()
+    const session = await auth()
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+    const requesterId = session.user.id
+
+    const { id: familyId, userId: targetUserId } = await params
+
+    // Only admin can change roles
+    const { rows: requesterMembership } = await sql`
+      SELECT role FROM family_members WHERE family_id = ${familyId} AND user_id = ${requesterId}
+    `
+    if (requesterMembership.length === 0 || requesterMembership[0].role !== "admin") {
+      return NextResponse.json({ error: "Forbidden — only admins can change roles" }, { status: 403 })
+    }
+
     const body = await request.json()
     const { role } = body
 
-    // Get the authorization header from the request
-    const authHeader = request.headers.get("authorization")
-    let currentUserId = null
-
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      const token = authHeader.split(" ")[1]
-
-      // Verify the token
-      const { data, error } = await supabase.auth.getUser(token)
-
-      if (error || !data.user) {
-        console.error("Auth error:", error)
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-      }
-
-      currentUserId = data.user.id
-    } else {
-      // Fallback to getting user from session
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser()
-
-      if (authError || !user) {
-        console.error("Auth error:", authError)
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-      }
-
-      currentUserId = user.id
+    if (!role || !["admin", "parent", "child"].includes(role)) {
+      return NextResponse.json({ error: "Valid role is required (admin, parent, child)" }, { status: 400 })
     }
 
-    const familyId = params.id
-    const memberUserId = params.userId
+    const { rows } = await sql`
+      UPDATE family_members
+      SET role = ${role}
+      WHERE family_id = ${familyId} AND user_id = ${targetUserId}
+      RETURNING *
+    `
 
-    // Check if the current user is an admin or parent of this family
-    const { data: currentMembership, error: membershipError } = await supabase
-      .from("family_members")
-      .select("role")
-      .eq("family_id", familyId)
-      .eq("user_id", currentUserId)
-      .single()
-
-    if (membershipError || !currentMembership || !["admin", "parent"].includes(currentMembership.role)) {
-      return NextResponse.json({ error: "You don't have permission to update member roles" }, { status: 403 })
+    if (rows.length === 0) {
+      return NextResponse.json({ error: "Member not found" }, { status: 404 })
     }
 
-    // Update the member's role
-    const { error: updateError } = await supabase
-      .from("family_members")
-      .update({ role })
-      .eq("family_id", familyId)
-      .eq("user_id", memberUserId)
-
-    if (updateError) {
-      console.error("Error updating member role:", updateError)
-      return NextResponse.json({ error: "Failed to update member role" }, { status: 500 })
-    }
-
-    return NextResponse.json({ message: "Member role updated successfully" })
-  } catch (error) {
+    return NextResponse.json({ message: "Role updated successfully" })
+  } catch (error: any) {
     console.error("Error updating member role:", error)
     return NextResponse.json({ error: "Failed to update member role" }, { status: 500 })
   }
 }
 
-export async function DELETE(request: Request, { params }: { params: { id: string; userId: string } }) {
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string; userId: string }> },
+) {
   try {
-    const supabase = createServerSupabaseClient()
+    const session = await auth()
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+    const requesterId = session.user.id
 
-    // Get the authorization header from the request
-    const authHeader = request.headers.get("authorization")
-    let currentUserId = null
+    const { id: familyId, userId: targetUserId } = await params
 
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      const token = authHeader.split(" ")[1]
-
-      // Verify the token
-      const { data, error } = await supabase.auth.getUser(token)
-
-      if (error || !data.user) {
-        console.error("Auth error:", error)
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-      }
-
-      currentUserId = data.user.id
-    } else {
-      // Fallback to getting user from session
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser()
-
-      if (authError || !user) {
-        console.error("Auth error:", authError)
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-      }
-
-      currentUserId = user.id
+    // Admin can remove anyone; a member can remove themselves
+    const { rows: requesterMembership } = await sql`
+      SELECT role FROM family_members WHERE family_id = ${familyId} AND user_id = ${requesterId}
+    `
+    if (requesterMembership.length === 0) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
-    const familyId = params.id
-    const memberUserId = params.userId
+    const isAdmin = requesterMembership[0].role === "admin"
+    const isSelf = requesterId === targetUserId
 
-    // Check if the current user is an admin or parent of this family
-    const { data: currentMembership, error: membershipError } = await supabase
-      .from("family_members")
-      .select("role")
-      .eq("family_id", familyId)
-      .eq("user_id", currentUserId)
-      .single()
-
-    if (membershipError || !currentMembership || !["admin", "parent"].includes(currentMembership.role)) {
-      return NextResponse.json({ error: "You don't have permission to remove members" }, { status: 403 })
+    if (!isAdmin && !isSelf) {
+      return NextResponse.json({ error: "Forbidden — only admins can remove other members" }, { status: 403 })
     }
 
-    // Remove the member
-    const { error: deleteError } = await supabase
-      .from("family_members")
-      .delete()
-      .eq("family_id", familyId)
-      .eq("user_id", memberUserId)
+    const { rows } = await sql`
+      DELETE FROM family_members
+      WHERE family_id = ${familyId} AND user_id = ${targetUserId}
+      RETURNING user_id
+    `
 
-    if (deleteError) {
-      console.error("Error removing member:", deleteError)
-      return NextResponse.json({ error: "Failed to remove member" }, { status: 500 })
+    if (rows.length === 0) {
+      return NextResponse.json({ error: "Member not found" }, { status: 404 })
     }
 
     return NextResponse.json({ message: "Member removed successfully" })
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error removing member:", error)
     return NextResponse.json({ error: "Failed to remove member" }, { status: 500 })
   }
